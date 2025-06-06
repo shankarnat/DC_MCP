@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "salesforce": {
+      "command": "/path/to/your/venv/bin/python",
+      "args": ["/path/to/salesforce_mcp_server.py"],
+      "env": {
+        "SALESFORCE_USERNAME": "your_username@example.com",
+        "SALESFORCE_PASSWORD": "your_password",
+        "SALESFORCE_SECURITY_TOKEN": "your_security_token",
+        "SALESFORCE_INSTANCE_URL": "https://your-instance.salesforce.com",
+        "SALESFORCE_API_VERSION": "v59.0"
+      }
+    }
+  }
+}
