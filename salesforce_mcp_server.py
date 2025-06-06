@@ -76,6 +76,29 @@ class SalesforceDataCloudServer:
                         },
                         "required": ["object_name"]
                     }
+                ),
+                types.Tool(
+                    name="get_data_cloud_metadata",
+                    description="Get Data Cloud metadata about entities, including Calculated Insights, Engagement, Profile, and other entities",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "entityType": {
+                                "type": "string",
+                                "description": "The requested metadata entity type",
+                                "enum": ["DataLakeObject", "DataModelObject", "CalculatedInsight"]
+                            },
+                            "entityCategory": {
+                                "type": "string", 
+                                "description": "The requested metadata entity category (not applicable for CalculatedInsight)",
+                                "enum": ["Profile", "Engagement", "Related"]
+                            },
+                            "entityName": {
+                                "type": "string",
+                                "description": "The name of the requested metadata entity (e.g., UnifiedIndividual__dlm)"
+                            }
+                        }
+                    }
                 )
             ]
         
@@ -92,6 +115,8 @@ class SalesforceDataCloudServer:
                     result = await self._get_data_cloud_objects()
                 elif name == "describe_object":
                     result = await self._describe_object(arguments["object_name"])
+                elif name == "get_data_cloud_metadata":
+                    result = await self._get_data_cloud_metadata(arguments)
                 else:
                     raise ValueError(f"Unknown tool: {name}")
                 
@@ -279,6 +304,38 @@ class SalesforceDataCloudServer:
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(f"Failed to describe object: {error_text}")
+                
+                return await response.json()
+    
+    async def _get_data_cloud_metadata(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Get Data Cloud metadata using the v1 metadata API"""
+        import aiohttp
+        from urllib.parse import urlencode
+        
+        # Build query parameters
+        params = {}
+        if "entityType" in arguments:
+            params["entityType"] = arguments["entityType"]
+        if "entityCategory" in arguments:
+            params["entityCategory"] = arguments["entityCategory"]
+        if "entityName" in arguments:
+            params["entityName"] = arguments["entityName"]
+        
+        # Construct URL
+        url = f"{self.instance_url}/api/v1/metadata/"
+        if params:
+            url += "?" + urlencode(params)
+        
+        headers = {
+            "Authorization": f"Bearer {self.session_id}",
+            "Content-Type": "application/json"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"Metadata API failed: {error_text}")
                 
                 return await response.json()
     

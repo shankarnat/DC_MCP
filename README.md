@@ -31,6 +31,7 @@ python salesforce_mcp_server.py
 - **query_data_cloud**: Execute SQL queries using Data Cloud Query API V2
 - **get_data_cloud_objects**: List available objects
 - **describe_object**: Get object metadata
+- **get_data_cloud_metadata**: Get Data Cloud metadata about entities (Calculated Insights, Engagement, Profile, etc.)
 
 ## Configuration
 
