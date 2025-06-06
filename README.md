@@ -28,7 +28,7 @@ python salesforce_mcp_server.py
 
 ## Available Tools
 
-- **query_data_cloud**: Execute SOQL queries
+- **query_data_cloud**: Execute SQL queries using Data Cloud Query API V2
 - **get_data_cloud_objects**: List available objects
 - **describe_object**: Get object metadata
 

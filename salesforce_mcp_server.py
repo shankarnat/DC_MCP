@@ -43,13 +43,13 @@ class SalesforceDataCloudServer:
             return [
                 types.Tool(
                     name="query_data_cloud",
-                    description="Execute a SOQL query against Salesforce Data Cloud",
+                    description="Execute a SQL query against Salesforce Data Cloud using Query API V2",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "SOQL query to execute"
+                                "description": "SQL query to execute (Data Cloud SQL syntax)"
                             }
                         },
                         "required": ["query"]
@@ -189,23 +189,60 @@ class SalesforceDataCloudServer:
                 logger.info(f"Successfully authenticated to Salesforce at {self.instance_url}")
     
     async def _query_data_cloud(self, query: str) -> dict[str, Any]:
-        """Execute a SOQL query against Data Cloud"""
+        """Execute a SQL query against Data Cloud using Query API V2"""
         import aiohttp
-        from urllib.parse import quote
         
-        url = f"{self.instance_url}/services/data/{self.api_version}/query?q={quote(query)}"
+        # Use Data Cloud Query API V2 endpoint
+        url = f"{self.instance_url}/api/v2/query"
         headers = {
             "Authorization": f"Bearer {self.session_id}",
             "Content-Type": "application/json"
         }
         
+        # Prepare the query payload
+        payload = {
+            "sql": query
+        }
+        
+        all_records = []
+        batch_id = None
+        
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
+            # Make the initial POST request
+            async with session.post(url, json=payload, headers=headers) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(f"Query failed: {error_text}")
                 
-                return await response.json()
+                result = await response.json()
+                
+                # Extract data and batchId if present
+                if "data" in result:
+                    all_records.extend(result["data"])
+                
+                batch_id = result.get("nextBatchId")
+                
+                # If there are more batches, fetch them using GET requests
+                while batch_id:
+                    batch_url = f"{url}?batchId={batch_id}"
+                    async with session.get(batch_url, headers=headers) as batch_response:
+                        if batch_response.status != 200:
+                            error_text = await batch_response.text()
+                            raise Exception(f"Batch query failed: {error_text}")
+                        
+                        batch_result = await batch_response.json()
+                        
+                        if "data" in batch_result:
+                            all_records.extend(batch_result["data"])
+                        
+                        batch_id = batch_result.get("nextBatchId")
+                
+                # Return in a format similar to SOQL query response
+                return {
+                    "records": all_records,
+                    "done": True,
+                    "totalSize": len(all_records)
+                }
     
     async def _get_data_cloud_objects(self) -> list[dict[str, Any]]:
         """Get list of available Data Cloud objects"""
