@@ -216,58 +216,122 @@ class SalesforceDataCloudServer:
     async def _query_data_cloud(self, query: str) -> dict[str, Any]:
         """Execute a SQL query against Data Cloud using Query API V2"""
         import aiohttp
+        from urllib.parse import quote
         
-        # Use Data Cloud Query API V2 endpoint
-        url = f"{self.instance_url}/api/v2/query"
+        # Try Data Cloud Query API V2 first
+        dc_url = f"{self.instance_url}/api/v2/query"
         headers = {
             "Authorization": f"Bearer {self.session_id}",
             "Content-Type": "application/json"
         }
         
-        # Prepare the query payload
+        # Prepare the query payload for Data Cloud API V2
         payload = {
             "sql": query
         }
         
         all_records = []
-        batch_id = None
         
         async with aiohttp.ClientSession() as session:
-            # Make the initial POST request
-            async with session.post(url, json=payload, headers=headers) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(f"Query failed: {error_text}")
-                
-                result = await response.json()
-                
-                # Extract data and batchId if present
-                if "data" in result:
-                    all_records.extend(result["data"])
-                
-                batch_id = result.get("nextBatchId")
-                
-                # If there are more batches, fetch them using GET requests
-                while batch_id:
-                    batch_url = f"{url}?batchId={batch_id}"
-                    async with session.get(batch_url, headers=headers) as batch_response:
-                        if batch_response.status != 200:
-                            error_text = await batch_response.text()
-                            raise Exception(f"Batch query failed: {error_text}")
+            try:
+                # Make the initial POST request to Data Cloud API V2
+                async with session.post(dc_url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        result = await response.json()
                         
-                        batch_result = await batch_response.json()
+                        # Extract data from initial response
+                        if "data" in result:
+                            all_records.extend(result["data"])
                         
-                        if "data" in batch_result:
-                            all_records.extend(batch_result["data"])
+                        # Handle pagination with batchId
+                        batch_id = result.get("nextBatchId")
+                        while batch_id:
+                            batch_url = f"{dc_url}?batchId={batch_id}"
+                            async with session.get(batch_url, headers=headers) as batch_response:
+                                if batch_response.status != 200:
+                                    break
+                                
+                                batch_result = await batch_response.json()
+                                
+                                if "data" in batch_result:
+                                    all_records.extend(batch_result["data"])
+                                
+                                batch_id = batch_result.get("nextBatchId")
                         
-                        batch_id = batch_result.get("nextBatchId")
-                
-                # Return in a format similar to SOQL query response
-                return {
-                    "records": all_records,
-                    "done": True,
-                    "totalSize": len(all_records)
-                }
+                        # Return Data Cloud format
+                        return {
+                            "data": all_records,
+                            "metadata": result.get("metadata", {}),
+                            "done": True,
+                            "totalSize": len(all_records)
+                        }
+                    
+                    elif response.status == 404:
+                        # Data Cloud API not available, fall back to SOQL
+                        logger.info("Data Cloud API V2 not available, falling back to SOQL")
+                        pass  # Will try SOQL below
+                    else:
+                        error_text = await response.text()
+                        raise Exception(f"Data Cloud Query failed: {error_text}")
+                        
+            except Exception as e:
+                if "404" in str(e) or "URL No Longer Exists" in str(e):
+                    logger.info("Data Cloud API V2 not available, falling back to SOQL")
+                else:
+                    raise e
+            
+            # Fallback to standard SOQL if Data Cloud API is not available
+            # Convert SQL-like syntax to SOQL
+            soql_query = self._convert_sql_to_soql(query)
+            
+            soql_url = f"{self.instance_url}/services/data/{self.api_version}/query?q={quote(soql_query)}"
+            
+            # Make SOQL request
+            next_url = soql_url
+            while next_url:
+                if next_url.startswith('/'):
+                    next_url = self.instance_url + next_url
+                    
+                async with session.get(next_url, headers=headers) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        raise Exception(f"SOQL Query failed: {error_text}")
+                    
+                    result = await response.json()
+                    
+                    if "records" in result:
+                        all_records.extend(result["records"])
+                    
+                    if result.get("done", True):
+                        next_url = None
+                    else:
+                        next_url = result.get("nextRecordsUrl")
+            
+            # Return in SOQL format
+            return {
+                "records": all_records,
+                "done": True,
+                "totalSize": len(all_records)
+            }
+    
+    def _convert_sql_to_soql(self, query: str) -> str:
+        """Convert SQL-like syntax to SOQL for fallback"""
+        # Handle SELECT TOP syntax
+        if query.upper().startswith("SELECT TOP"):
+            query = query.replace("SELECT TOP ", "SELECT ", 1)
+            parts = query.split(" FROM ")
+            if len(parts) == 2:
+                select_part = parts[0]
+                from_part = parts[1]
+                select_words = select_part.split()
+                if len(select_words) > 2:
+                    limit_num = select_words[2]
+                    remaining_select = " ".join(select_words[3:])
+                    query = f"SELECT {remaining_select} FROM {from_part} LIMIT {limit_num}"
+        
+        # Note: This is a basic conversion. Data Lake Objects (__dlm) won't work with SOQL
+        # but this provides a fallback for standard objects
+        return query
     
     async def _get_data_cloud_objects(self) -> list[dict[str, Any]]:
         """Get list of available Data Cloud objects"""
